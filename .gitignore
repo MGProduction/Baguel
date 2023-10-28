@@ -7,6 +7,15 @@
 *.obj
 *.elf
 
+# asm output
+*.int
+*.lbl
+*.asm
+main.prg
+
+gustavsson
+stb
+
 # Linker output
 *.ilk
 *.map
@@ -41,6 +50,12 @@
 *.su
 *.idb
 *.pdb
+*.s
+*.ncb
+*.suo
+*.sln
+*.vcproj*
+winmain.cpp
 
 # Kernel Module Compile Results
 *.mod*
@@ -50,3 +65,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+Debug
+res
+bin
