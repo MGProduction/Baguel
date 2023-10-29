@@ -6,6 +6,8 @@
 
 #if !defined(WIN32)
 //#define USE_OVERLAYS
+#else
+int err=0;
 #endif
 //#define USE_FULL_OVERLAYS
 #define HAS_MUSIC
@@ -93,7 +95,7 @@ try_again:
 
 // -------------------------------------------------------------
 
-#define BASE_FRAME    53
+#define BASE_FRAME    48
 #define FRAMES_START 0x1ba0
 
 // -------------------------------------------------------------
@@ -105,26 +107,33 @@ try_again:
 #define ply_hit    4
 //#define face_right 2
 
+#define FIXEDPOINT 3
+
 typedef struct{
  u8   x,y;
  u8   flags,frame,time;
- u16  pos;
- u8   back[4];
+ u16  pos; 
 }_player;
 
 typedef struct{
  u8  x,y,h;
  s8  dx,dy,dh;
- u16 pos,pos2;
- u8  back[2];
+ u16 pos,pos2; 
 }_ball;
 
 u8      gamestatus;
 u8      x,y,ch,r;
 u8      movement;
 
+typedef struct{
+ u16 pos;
+ u8  ch;
+}_back;
+
 __striped _player ply[2];
 _ball   ball;
+__striped _back back[64-BASE_FRAME];
+u8              iback;
 u16 zone[2]={VIDEO_RAM+5*VIDEO_W,VIDEO_RAM+12*VIDEO_W};
 
 #if defined(WIN32)
@@ -255,11 +264,11 @@ void game_input()
 #define mode_draw 2
 #define mode_save 3
 
-u8 mask[8]={128|64,32|16,8|4,2|1};
+u8 mask[8]={128,64,32,16,8,4,2,1};
 
 void ball_setpos(u8 x,u8 y)
 {
- ball.x=x<<3;ball.y=y<<3;ball.h=0;
+ ball.x=x<<FIXEDPOINT;ball.y=y<<FIXEDPOINT;ball.h=0;
 }
 
 void ball_setdelta(s8 x,s8 y)
@@ -268,59 +277,66 @@ void ball_setdelta(s8 x,s8 y)
 }
 void ball_pos()
 {
- u8 y=(ball.y>>3);
- ball.pos=(ball.x>>3)+(y<<4)+(y<<2);
- y=((ball.y-ball.h)>>3);
- ball.pos2=(ball.x>>3)+(y<<4)+(y<<2);
+ u8 y=(ball.y>>FIXEDPOINT);
+ ball.pos=(ball.x>>FIXEDPOINT)+(y<<4)+(y<<2);
+ y=((ball.y-ball.h)>>FIXEDPOINT);
+ ball.pos2=(ball.x>>FIXEDPOINT)+(y<<4)+(y<<2);
 }
-void ball_mix(u8 dest,u8 t)
+
+u8*add_back(u16 pos)
 {
- u8*pdest=ADDR(0x1C00)+(dest<<3); 
- u8 a=ball.back[t];
- u8*pa=ADDR(0x1C00)+(a<<3); 
+ u8*v=ADDR(VIDEO_RAM);
+ u8 dest=BASE_FRAME+iback;
+ u8*pdest;
+ u8 a=v[pos];
+ u8*pa;
+ for(x=0;x<iback;x++)
+  if(back[x].pos==pos)
+   {
+    dest=BASE_FRAME+x;
+    return ADDR(0x1C00)+(dest<<3);
+   }
+ // add a new 
+ back[iback].pos=pos;
+ back[iback].ch=a;
+ iback++;
+#if defined(WIN32)
+ {
+  int ibacksize=sizeof(back)/sizeof(back[0]);
+  if(iback>=ibacksize)
+   err++;
+ }
+#endif
+
+ v[pos]=dest;
+
+ pdest=ADDR(0x1C00)+(dest<<3);
+ pa=ADDR(0x1C00)+(a<<3); 
  for(x=0;x<8;x++)
   pdest[x]=pa[x];
+
+ return pdest;
+}
+
+void ball_mix(u16 pos,u8 t)
+{
+ u8*pdest=add_back(pos);
+
  if(t)
-  x=((ball.y-ball.h)&7)>>1;
+  x=((ball.y-ball.h)&7);
  else
-  x=(ball.y&7)>>1;
- y=(ball.x&7)>>1;
+  x=(ball.y&7);
+ y=(ball.x&7);
  if(t)
   pdest[x]|=mask[y];
  pdest[x+1]|=mask[y];
 }
-void ball_ui(u8 mode)
-{
- u8*v,*v2;
- ball_pos();
- v=ADDR(VIDEO_RAM)+ball.pos;
- v2=ADDR(VIDEO_RAM)+ball.pos2;
- switch(mode)
-  {
-  case mode_hide:
-   v[0]=ball.back[0];
-   v2[0]=ball.back[1];
-   break;
-   case mode_save:
-   case mode_draw:  
-    {     
-     ball.back[0]=v[0];   
-     ball.back[1]=v2[0];   
-     if(mode==mode_save)
-      break;
-     else
-      {
-       u8 f=BASE_FRAME+8;
-       ball_mix(f,0);
-       v[0]=f;
 
-       f++;
-       ball_mix(f,1);
-       v2[0]=f;
-      }
-    }
-   break;
-  }
+void ball_draw()
+{
+ ball_pos();
+ ball_mix(ball.pos,0);
+ ball_mix(ball.pos2,1);
 }
 
 
@@ -328,15 +344,15 @@ void ball_ui(u8 mode)
 void ball_act()
 {
  ball.x+=ball.dx;
- if(ball.y<(6<<3))
+ if(ball.y<(6<<FIXEDPOINT))
   ball.dy=-ball.dy;
  else
-  if(ball.y>(22<<3))
+  if(ball.y>(22<<FIXEDPOINT))
    ball.dy=-ball.dy;
  if(ball.x<2)
   ball.dx=-ball.dx;
  else
-  if(ball.x>(20<<3)-2)
+  if(ball.x>(20<<FIXEDPOINT)-2)
    ball.dx=-ball.dx;
  ball.y+=ball.dy;
  ball.h+=ball.dh;
@@ -352,12 +368,13 @@ void efx_flip(u8*ptr)
 #if defined(WIN32)
  u8 pow1[]={128,64,32,16,8,4,2,1};
  u8 pow2[]={1,2,4,8,16,32,64,128};
- for(y=0;y<32;y++)
+ for(y=0;y<8;y++)
  {
   u8 a=0;
   for(x=0;x<8;x++)
-   if(ptr[y]&pow1[x])
-    a|=pow2[x];
+   if(ptr[y])
+    if(ptr[y]&pow1[x])
+     a|=pow2[x];
   ptr[y]=a;
  }
 #else
@@ -373,116 +390,121 @@ loop:  lsr $fd
        bcc loop
        sta ($0d),y
        iny
-       cpy #$20
+       cpy #$08
        bne loopx       
  }
  POKE(0xfd,t);
 #endif
 }
 
+void ply_setpos(u8 w,u8 x,u8 y,u8 face)
+{
+ ply[w].x=x<<FIXEDPOINT;
+ ply[w].y=y<<FIXEDPOINT;
+ ply[w].flags=face;
+}
+
+u8 d[]={0,VIDEO_W,1,VIDEO_W+1};
+u8 tmp[8];
+
+void gettmp(u8 a,u8 flip)
+{
+ u8*pa=ADDR(0x1C00)+(a<<3); 
+ if(flip)
+ {
+  for(x=0;x<8;x++)   
+   tmp[x]=((pa[x]&0x01)<<7)|((pa[x]&0x02)<<5)|((pa[x]&0x04)<<3)|((pa[x]&0x08)<<1)|((pa[x]&0x10)>>1)|((pa[x]&0x20)>>3)|((pa[x]&0x40)>>5)|((pa[x]&0x80)>>7);
+ }
+ else
+ {
+  for(x=0;x<8;x++)
+   tmp[x]=pa[x]; 
+ }
+}
+
 void ply_mix(u8 w)
 {
- u8 dest=BASE_FRAME+(w<<2); 
- u8*pdest=ADDR(0x1C00)+(dest<<3); 
  u8*frames=ADDR(FRAMES_START)+(ply[w].frame<<2);
  u8 by=0;
+ 
  if(ply[w].flags&face_left)
   by=2;
- for(y=0;y<4;y++)
+
+ for(ch=0;ch<2;ch++)
   {
-   u8 a=frames[(y+by)&3];
-   u8*pa=ADDR(0x1C00)+(a<<3); 
-   for(x=0;x<8;x++)
-    pdest[(y<<3)+x]=pa[x];
-  }
- if(by) 
-  efx_flip(pdest); 
- for(y=0;y<4;y++)
-  {
-   u8 a=ply[w].back[y];
-   u8*pa=ADDR(0x1C00)+(a<<3); 
-   for(x=0;x<8;x++)
-    pdest[(y<<3)+x]|=pa[x];
+   u8 y,l=ply[w].x&0x7;
+   if(ch==1) l=8-l;
+   for(y=0;y<4;y++)
+    {
+     u8*pdest;
+     u8 a=frames[(y+by)&3];
+     gettmp(a,by);   
+
+     pdest=add_back(ply[w].pos+d[y]+ch);
+     
+     for(x=0;x<8;x++)
+      if(ch==0)
+       pdest[x]|=tmp[x]>>l;
+      else
+       pdest[x]|=tmp[x]<<l;
+    }
+   //if(l==0) break;
   }
 }
 void ply_pos(u8 w)
 {
- u8 y=(ply[w].y>>3);
- ply[w].pos=(ply[w].x>>3)+(y<<4)+(y<<2);
+ u8 y=(ply[w].y>>FIXEDPOINT);
+ ply[w].pos=(ply[w].x>>FIXEDPOINT)+(y<<4)+(y<<2);
 }
-void ply_ui(u8 w,u8 mode)
-{
- u8*v;
- ply_pos(w);
- v=ADDR(zone[w])+ply[w].pos;
- switch(mode)
- {
-  case mode_hide:
-   v[0]=ply[w].back[0];
-   v[VIDEO_W]=ply[w].back[1];
-   v[1]=ply[w].back[2];
-   v[VIDEO_W+1]=ply[w].back[3];
-  break;
-  case mode_save:
-  case mode_draw:
-   ply[w].back[0]=v[0];
-   ply[w].back[1]=v[VIDEO_W];
-   ply[w].back[2]=v[1];
-   ply[w].back[3]=v[VIDEO_W+1];
-   if(mode==mode_save)
-    break;
-   else
+
+void ply_draw(u8 w)
+{ 
+ u8 f=BASE_FRAME+(w<<2);  
+ if(ply[w].flags&ply_hit)
+  {
+   ply[w].time++;
+   if(ply[w].time>5)
     {
-     u8 f=BASE_FRAME+(w<<2);  
-     if(ply[w].flags&ply_hit)
-      {
-       ply[w].time++;
-       if(ply[w].time>5)
-        {
-         ply[w].time=0;
-         if(ply[w].frame==5)
-          ply[w].frame=8;
-         else
-          if(ply[w].frame==8)
-           ply[w].frame=4;
-          else
-           ply[w].flags-=ply_hit;
-        }
-      }
+     ply[w].time=0;
+     if(ply[w].frame==5)
+      ply[w].frame=8;
      else
-     if(ply[w].flags&ply_walk)
-      {
-       if((ply[w].frame<1)||(ply[w].frame>3))
-        {ply[w].frame=1;ply[w].time=0;}
-       ply[w].time++;
-       if(ply[w].time>2)
-        {
-         ply[w].time=0;
-         ply[w].frame++;
-         if(ply[w].frame==4)
-          ply[w].frame=1;
-        }
-      }
-     else
-      ply[w].frame=0;
-     ply_mix(w);
-     v[0]=f;v[1]=f+2;
-     v[VIDEO_W]=f+1;v[VIDEO_W+1]=f+3;
+      if(ply[w].frame==8)
+       ply[w].frame=4;
+      else
+       ply[w].flags-=ply_hit;
     }
-  break;
- }
+  }
+ else
+ if(ply[w].flags&ply_walk)
+  {
+   if((ply[w].frame<1)||(ply[w].frame>3))
+    {ply[w].frame=1;ply[w].time=0;}
+   ply[w].time++;
+   if(ply[w].time>2)
+    {
+     ply[w].time=0;
+     ply[w].frame++;
+     if(ply[w].frame==4)
+      ply[w].frame=1;
+    }
+  }
+ else
+  ply[w].frame=0;
+ ply_pos(w);
+ ply_mix(w);
+
 }
 
 void game_reset()
 {  
- ply[0].x=14<<3;ply[0].y=3<<3;ply[0].flags=face_left;
- ply[1].x=4<<3;ply[1].y=7<<3;ply[1].flags=0; 
- for(r=0;r<2;r++)
-  ply_ui(r,mode_save);   
-
- ball_setpos(6,14+8);
+ ply_setpos(0,14,8,face_left);
+ ply_setpos(1,4,18,0);
+ ball_setpos(6,19);
  ball_setdelta(1,-1); 
- ball_ui(mode_save);
+
+ iback=0;
+ 
 }
 
 void player_act(u8 w)
@@ -516,13 +538,13 @@ void player_act(u8 w)
      }
    if(movement&JOY_UP)
     {
-     if(ply[w].y>0)
+     if(ply[w].y>12<<3)
        ply[w].y--;
     }
    else
     if(movement&JOY_DOWN)
      {
-      if(ply[w].y<64)
+      if(ply[w].y<20<<3)
        ply[w].y++;
      }   
   }
@@ -536,32 +558,43 @@ void ai_act(u8 w)
   {
    ply[w].flags|=ply_walk;
    ply[w].flags|=face_left;
-   ply[w].x--;
+   if(ply[w].x>0)
+    ply[w].x--;
   }
  else
   if(ply[w].x<ball.x)
    {
     ply[w].flags|=ply_walk;
     ply[w].flags&=(0xFF-face_left);;
-    ply[w].x++;
+    if(ply[w].x<(VIDEO_W-2)*8)
+     ply[w].x++;
    }
   else
    ply[w].flags&=(0xff-ply_walk);
 }
 
-void game_draw_characters()
+void back_restore()
 {
- ball_ui(mode_hide);
- ply_ui(1,mode_hide);
- ply_ui(0,mode_hide);
+ u8*v=ADDR(VIDEO_RAM); 
+ while(iback--)
+  v[back[iback].pos]=back[iback].ch;
+ iback=0;
+}
 
+void game_draw_characters()
+{ 
  player_act(1);
+#if defined(HAS_ENEMYAI)
  ai_act(0);
+#endif
  ball_act();
-
- ply_ui(0,mode_draw);
- ply_ui(1,mode_draw);
- ball_ui(mode_draw); 
+ 
+ REFRESH
+ back_restore();
+ ply_draw(0);
+ ply_draw(1);
+ ball_draw(); 
+ REFRESH
 }
 
 void gui_update()
@@ -594,8 +627,8 @@ void page_draw_page(u8 r)
   #else
   POKE(VICCHGEN,(PEEK(VICCHGEN)&0xF0)|0xF);
 
-  hunpack(ADDR(0x1fff-180),ADDR(COLOR_RAM));
-  hunpack(ADDR(0x1fff-180)+23,ADDR(VIDEO_RAM));
+  hunpack(ADDR(0x1fff-167),ADDR(COLOR_RAM));
+  hunpack(ADDR(0x1fff-167)+23,ADDR(VIDEO_RAM));
   
   //page_unpack(ADDR(0x1fff-237));
   #endif
@@ -646,8 +679,7 @@ int main()
 #endif
      while(1)
       {
-       game_input();
-       REFRESH
+       game_input();       
        game_draw_characters();  
        gui_update();       
 
