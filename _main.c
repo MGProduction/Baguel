@@ -4,9 +4,8 @@
 #define HAS_GUI
 
 #define USE_CHARCACHE
-#define TARGET_UNEXPANDED
 
-#define HAS_ENEMYAI
+// #define HAS_ENEMYAI
 #define HAS_BALLMOVEMENT
 
 // #define HAS_JUSTME
@@ -25,26 +24,14 @@ int err=0;
 
 #if defined(OSCAR64)
 
-#if defined(TARGET_UNEXPANDED)
-
 #pragma stacksize( 64 )
 #pragma heapsize( 4 )
 
 #pragma region( stack, 0x0100, 0x01f0, , , {stack} )
-//#pragma region( stack, 0x033c, 0x03fe, , , {stack} )
+//#pragma region( bss, 0x033c, 0x03a7, , , {bss} )
 
 #pragma region( main, 0x1080, 0x1ba0, , , {code,data,bss   } )
 
-#pragma section( cache, 0 )
-#pragma region(bank1,  0x033c, 0x03fe, ,1, { cache } )
-
-#pragma section( garbage, 0 )
-#pragma region( bank2, 0x1fcc, 0x1fff, ,2, { garbage } )
-
-
-#else
-#pragma region( main, 0x0480, 0x1ba0, , , {code,data,stack,bss   } )
-#endif
 
 #else
 
@@ -137,26 +124,17 @@ typedef struct{
 typedef struct{
  u8  x,y,h;
  s8  dx,dy,dh;
-#if defined(BALL_WISEMOVEMENT)
- s8  sx,sy,err,e2;
- u8  destx,desty;
-#endif
  u16 pos,pos2; 
 }_ball;
 
 #define status_waitingservice 1
 #define status_service        2  
 #define status_playing        3  
-
-#define status_ballout        8
-
 #define status_gameended     16
 
-#define target_up    1
-#define target_down  2
-#define target_left  4
-#define target_right 8
-#define target_leftright 16
+u8      gamestatus;
+u8      x,y,ch,r;
+u8      movement;
 
 typedef struct{
  u16 pos;
@@ -168,32 +146,16 @@ typedef struct{
  u8  ch,ech;
 }_drawbuffer;
 
-#pragma bss(garbage)
 __striped _player ply[2];
-_ball             ball;
-#pragma bss(bss)
+_ball   ball;
 
 __striped _backbuffer back[64-BASE_FRAME];
 u8                    iback;
-
-u8                    tmp[8];
-u8                    gamestatus;
-u8                    x,y,ch,r;
-u8                    movement;
-
-#pragma bss(cache)
 __striped _drawbuffer buffer[64-BASE_FRAME];
 u8                    ibuffer;
-#pragma bss(bss)
-
 #if defined(USE_CHARCACHE)
-#pragma bss(cache)
 u8                    charcache[(64-BASE_FRAME)*8];
-#pragma bss(bss)
 #endif
-
-u8 mask[8]={128,64,32,16,8,4,2,1};
-u8 d[]={0,VIDEO_W,1,VIDEO_W+1};
 
 
 #if defined(WIN32)
@@ -329,74 +291,11 @@ void game_input()
  #endif
 }
 
-#if defined(BALL_WISEMOVEMENT)
-s8 abs8(s8 s)
-{
- if(s>0)
-  return s;
- else
-  return -s;
-}
+#define mode_hide 1
+#define mode_draw 2
+#define mode_save 3
 
-void ball_prepare(u8 x1,u8 y1)
-{
- ball.destx=x1;ball.desty=y1;
- ball.dx = abs8(x1-ball.x);
- ball.sx = ball.x<x1 ? 1 : -1;
- ball.dy = abs8(y1-ball.y);
- ball.sy = ball.y<y1 ? 1 : -1; 
- ball.err = (ball.dx>ball.dy ? ball.dx : -ball.dy)/2;
- ball.e2=0;
-}
-
-void ball_move()
-{
- ball.e2 = ball.err;
- if (ball.e2 >-ball.dx) 
- { ball.err -= ball.dy; ball.x += ball.sx; }
- if (ball.e2 < ball.dy) 
- { ball.err += ball.dx; ball.y += ball.sy; }
-}
-
-void ball_dest(u8 dest)
-{
- // 16 80 144
- // 120-168 64-96
- u8 px,py,bh,by,bx,bw;
- if(dest&target_up)
-  {
-   by=64;bh=31;  
-   if(dest&target_right)
-    {bx=80;bw=63;}
-   if(dest&target_left)
-    {bx=16;bw=63;}
-   else
-    {bx=16;bw=127;}
-  }
- else
-  {
-   by=120;bh=63;  
-   if(dest&target_right)
-    {bx=0;bw=127;}
-   else
-   if(dest&target_left)
-    {bx=80;bw=127;}
-   else
-   {bx=0;bw=255;}
-  } 
- rand();
- py=by+(rnd_a&bh);
- rand();
- px=bx+(rnd_a&bw);
-
- ball_prepare(px,py);
-}
-#else
-void ball_dest(u8 dest)
-{
-}
-#endif
-
+u8 mask[8]={128,64,32,16,8,4,2,1};
 
 void ball_setpos(u8 x,u8 y)
 {
@@ -497,14 +396,6 @@ void ball_draw()
 
 void ball_act()
 {
-#if defined(BALL_WISEMOVEMENT)
- if(ball.sx||ball.sy)
- {
-  ball_move();
-  if((ball.y<(6<<FIXEDPOINT))||(ball.y>(22<<FIXEDPOINT))||(ball.x<2)||(ball.x>(20<<FIXEDPOINT)-2))
-   gamestatus=status_ballout;
- }
-#else
  ball.x+=ball.dx;
  if(ball.y<(6<<FIXEDPOINT))
   ball.dy=-ball.dy;
@@ -517,7 +408,6 @@ void ball_act()
   if(ball.x>(20<<FIXEDPOINT)-2)
    ball.dx=-ball.dx;
  ball.y+=ball.dy;
-#endif
  if(ball.y<(11<<3))
   ball.h+=ball.dh*2;
  else
@@ -569,6 +459,9 @@ void ply_setpos(u8 w,u8 x,u8 y,u8 face)
  ply[w].y=y<<FIXEDPOINT;
  ply[w].flags=face;
 }
+
+u8 d[]={0,VIDEO_W,1,VIDEO_W+1};
+u8 tmp[8];
 
 void gettmp(u8 a,u8 flip)
 {
@@ -674,28 +567,6 @@ void game_reset()
  
 }
 
-u8 player_canhitball(u8 w)
-{ 
- if((ball.y>=ply[w].y)&&(ball.y<=ply[w].y+8))
- {
-  if(ply[w].flags&face_left)
-   {
-    if((ball.x>=ply[w].x)&&ball.x<=ply[w].x+(8))
-     return 1;
-   }
-  else
-  if((ball.x>=ply[w].x+8)&&(ball.x<=ply[w].x+16))
-   return 1;
- }
- return 0;
-}
-
-void ball_hit()
-{
- ball.dy=-ball.dy;
- ball.dx=-ball.dx;
-}
-
 void player_hit(u8 w)
 {
  ply[w].frame=5;ply[w].time=0;
@@ -709,12 +580,7 @@ void player_act(u8 w)
    if(ply[w].flags&ply_hit)
     ;
    else
-    {
-     player_hit(w);
-     if(ball.dy>0)
-      if(player_canhitball(w))
-       ball_hit();
-    }
+    player_hit(w);
   }
  else
  if(movement&(JOY_LEFT|JOY_RIGHT|JOY_UP|JOY_DOWN))
@@ -751,45 +617,23 @@ void player_act(u8 w)
 
 void ai_act(u8 w)
 {
- if(ply[w].flags&ply_hit)
-  ;
- else
+ if(ply[w].x>ball.x)
   {
-   u8 dx,dy;
-   ply[w].flags&=(0xff-ply_walk);
-   if(ball.dy>0)
-    {dx=(VIDEO_W/2)<<3;dy=72;}
-   else
-    {dx=ball.x-8;dy=64;} 
-
-   if(ply[w].x>dx)
-    {
-     ply[w].flags|=ply_walk;
-     ply[w].flags|=face_left;
-     if(ply[w].x>0)
-      ply[w].x--;
-    }
-   else
-    if(ply[w].x<dx)
-     {
-      ply[w].flags|=ply_walk;
-      ply[w].flags&=(0xFF-face_left);;
-      if(ply[w].x<(VIDEO_W-2)*8)
-       ply[w].x++;
-     }
-   if(ply[w].y>dy)
-    ply[w].y--;
-   else
-    if(ply[w].y<dy)
-     ply[w].y++;
+   ply[w].flags|=ply_walk;
+   ply[w].flags|=face_left;
+   if(ply[w].x>0)
+    ply[w].x--;
   }
-
- if(ball.dy<0)
-  if(player_canhitball(w))
-   {    
-    player_hit(w);
-    ball_hit();
+ else
+  if(ply[w].x<ball.x)
+   {
+    ply[w].flags|=ply_walk;
+    ply[w].flags&=(0xFF-face_left);;
+    if(ply[w].x<(VIDEO_W-2)*8)
+     ply[w].x++;
    }
+  else
+   ply[w].flags&=(0xff-ply_walk);
 }
 
 void sync_hide()
@@ -858,14 +702,6 @@ void game_waitingservice()
   }
 }
 
-#define target_up    1
-#define target_down  2
-#define target_left  4
-#define target_right 8
-#define target_leftright 16
-
-
-
 void game_service()
 {
  ball.h+=ball.dh;
@@ -883,7 +719,6 @@ void game_service()
    ply[1].flags=0;
    if((ball.h>=(10<<FIXEDPOINT))&&(ball.h<(20<<FIXEDPOINT)))
     {
-     ball_dest(target_up|target_right);
      ball.h+=(8<<FIXEDPOINT);
      ball.dh=-2;
      ply[1].frame=8;ply[1].time=0;

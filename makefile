@@ -2,6 +2,7 @@ CC=oscar64
 EMU=xvic.exe
 RM=del
 CFLAGS=-tm=vic20 -dOSCAR64
+CFLAGS3=-tm=vic20+3 -dOSCAR64
 
 all: baguel.prg
 
