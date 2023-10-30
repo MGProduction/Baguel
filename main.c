@@ -136,7 +136,7 @@ typedef struct{
 
 typedef struct{
  u8  x,y,h;
- s8  dx,dy,dh;
+ int  dx,dy,dh;
 #if defined(BALL_WISEMOVEMENT)
  s8  sx,sy,err,e2;
  u8  destx,desty;
@@ -404,7 +404,7 @@ void ball_setpos(u8 x,u8 y)
  ball.y=(y<<FIXEDPOINT)+7;ball.h=0;
 }
 
-void ball_setdelta(s8 x,s8 y)
+void ball_setdelta(int x,int y)
 { 
  ball.dx=x;ball.dy=y;ball.dh=8;
 }
@@ -676,7 +676,7 @@ void game_reset()
 
 u8 player_canhitball(u8 w)
 { 
- if((ball.y>=ply[w].y)&&(ball.y<=ply[w].y+8))
+ if((ball.y>=ply[w].y+12)&&(ball.y<=ply[w].y+18))
  {
   if(ply[w].flags&face_left)
    {
@@ -964,8 +964,8 @@ void page_draw_page(u8 r)
   #else
   POKE(VICCHGEN,(PEEK(VICCHGEN)&0xF0)|0xF);
 
-  hunpack(ADDR(0x1fff-167),ADDR(COLOR_RAM));
-  hunpack(ADDR(0x1fff-167)+23,ADDR(VIDEO_RAM));
+  hunpack(ADDR(0x1fff-168),ADDR(COLOR_RAM));
+  hunpack(ADDR(0x1fff-168)+24,ADDR(VIDEO_RAM));
   
   //page_unpack(ADDR(0x1fff-237));
   #endif
