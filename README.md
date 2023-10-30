@@ -3,6 +3,8 @@
 
 A unexpanded **VIC-20** tennis game (suspended / in hold)
 
+Note: game's far from ready (if ever it will be). You can try it if you want but keep in mind that's simply a little experiment (at least for now)
+
 This game is mostly a way to try to code software sprites - for unexpanded VIC-20. 
 
 And, considering that to avoid flickering it seems that's better (if not needed) to have a sort of "back buffer", with just 3,5 kb there's really little room for a full game (at least not using asm only).
