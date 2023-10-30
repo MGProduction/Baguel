@@ -108,7 +108,7 @@ void wait()
 
 //#pragma region( main, 0x1080, 0x1c00, , , {code, data, bss, heap, stack} )
 
-#define REFRESH sync();
+#define REFRESH syncPAL();
 
 #define POKE(addr,val)     (*(unsigned char*) (addr) = (val))
 #define POKEW(addr,val)    (*(unsigned*) (addr) = (val))

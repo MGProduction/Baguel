@@ -2,7 +2,14 @@
 
 #define HAS_PAGES
 #define HAS_GUI
-#define HAS_ENEMYAI
+
+#define USE_CHARCACHE
+
+// #define HAS_ENEMYAI
+// #define HAS_BALLMOVEMENT
+
+// #define HAS_JUSTME
+//#define HAS_JUSTBALL
 
 #if !defined(WIN32)
 //#define USE_OVERLAYS
@@ -21,9 +28,9 @@ int err=0;
 #pragma heapsize( 4 )
 
 #pragma region( stack, 0x0100, 0x01f0, , , {stack} )
-#pragma region( bss, 0x033c, 0x03a7, , , {bss} )
+//#pragma region( bss, 0x033c, 0x03a7, , , {bss} )
 
-#pragma region( main, 0x1080, 0x1ba0, , , {code,data   } )
+#pragma region( main, 0x1080, 0x1ba0, , , {code,data,bss   } )
 
 
 #else
@@ -128,13 +135,24 @@ u8      movement;
 typedef struct{
  u16 pos;
  u8  ch;
-}_back;
+}_backbuffer;
+
+typedef struct{
+ u16 pos;
+ u8  ch,ech;
+}_drawbuffer;
 
 __striped _player ply[2];
 _ball   ball;
-__striped _back back[64-BASE_FRAME];
-u8              iback;
-u16 zone[2]={VIDEO_RAM+5*VIDEO_W,VIDEO_RAM+12*VIDEO_W};
+
+__striped _backbuffer back[64-BASE_FRAME];
+u8                    iback;
+__striped _drawbuffer buffer[64-BASE_FRAME];
+u8                    ibuffer;
+#if defined(USE_CHARCACHE)
+u8                    charcache[(64-BASE_FRAME)*8];
+#endif
+
 
 #if defined(WIN32)
 char res[]="R00";
@@ -194,6 +212,15 @@ ll:
        bne ll
  } 
  }
+
+void syncPAL()
+{
+ __asm{
+ loopsync:  lda $9004 //VICRAST     ; Synchronization loop
+            cmp #140
+            bne loopsync
+}
+}
 
 #endif
 
@@ -268,7 +295,8 @@ u8 mask[8]={128,64,32,16,8,4,2,1};
 
 void ball_setpos(u8 x,u8 y)
 {
- ball.x=x<<FIXEDPOINT;ball.y=y<<FIXEDPOINT;ball.h=0;
+ ball.x=(x<<FIXEDPOINT)+2;
+ ball.y=(y<<FIXEDPOINT)+7;ball.h=0;
 }
 
 void ball_setdelta(s8 x,s8 y)
@@ -286,31 +314,52 @@ void ball_pos()
 u8*add_back(u16 pos)
 {
  u8*v=ADDR(VIDEO_RAM);
- u8 dest=BASE_FRAME+iback;
+#if defined(USE_CHARCACHE)
+ u8 dest=ibuffer;
+#else
+ u8 dest=BASE_FRAME+ibuffer;
+#endif
  u8*pdest;
  u8 a=v[pos];
  u8*pa;
+ for(x=0;x<ibuffer;x++)
+  if(buffer[x].pos==pos)
+   {    
+#if defined(USE_CHARCACHE)
+    dest=x;
+    return charcache+(dest<<3);
+#else
+    dest=BASE_FRAME+x;
+    return ADDR(0x1C00)+(dest<<3);
+#endif
+   }
+ // check if pos is in backbuffer
  for(x=0;x<iback;x++)
   if(back[x].pos==pos)
    {
-    dest=BASE_FRAME+x;
-    return ADDR(0x1C00)+(dest<<3);
+    a=back[x].ch;
+    break;
    }
  // add a new 
- back[iback].pos=pos;
- back[iback].ch=a;
- iback++;
+ buffer[ibuffer].pos=pos;
+ buffer[ibuffer].ch=a;
+ buffer[ibuffer].ech=dest;
+ ibuffer++;
 #if defined(WIN32)
  {
-  int ibacksize=sizeof(back)/sizeof(back[0]);
-  if(iback>=ibacksize)
+  int ibuffersize=sizeof(buffer)/sizeof(buffer[0]);
+  if(ibuffer>=ibuffersize)
    err++;
  }
 #endif
 
- v[pos]=dest;
+ //v[pos]=dest;
 
+#if defined(USE_CHARCACHE)
+ pdest=charcache+(dest<<3);
+#else
  pdest=ADDR(0x1C00)+(dest<<3);
+#endif
  pa=ADDR(0x1C00)+(a<<3); 
  for(x=0;x<8;x++)
   pdest[x]=pa[x];
@@ -425,14 +474,14 @@ void gettmp(u8 a,u8 flip)
 void ply_mix(u8 w)
 {
  u8*frames=ADDR(FRAMES_START)+(ply[w].frame<<2);
- u8 by=0;
+ u8 by=0,l=ply[w].x&0x7;
  
  if(ply[w].flags&face_left)
   by=2;
 
  for(ch=0;ch<2;ch++)
   {
-   u8 y,l=ply[w].x&0x7;
+   u8 y;
    if(ch==1) l=8-l;
    for(y=0;y<4;y++)
     {
@@ -448,7 +497,8 @@ void ply_mix(u8 w)
       else
        pdest[x]|=tmp[x]<<l;
     }
-   //if(l==0) break;
+   if(l==0) 
+    break;
   }
 }
 void ply_pos(u8 w)
@@ -459,7 +509,7 @@ void ply_pos(u8 w)
 
 void ply_draw(u8 w)
 { 
- u8 f=BASE_FRAME+(w<<2);  
+ 
  if(ply[w].flags&ply_hit)
   {
    ply[w].time++;
@@ -498,9 +548,11 @@ void ply_draw(u8 w)
 
 void game_reset()
 {  
- ply_setpos(0,14,8,face_left);
- ply_setpos(1,4,18,0);
- ball_setpos(6,19);
+ ply_setpos(0,11,8,face_left);
+ 
+ ply_setpos(1,4,19,0);
+ ball_setpos(5,20);
+
  ball_setdelta(1,-1); 
 
  iback=0;
@@ -573,28 +625,65 @@ void ai_act(u8 w)
    ply[w].flags&=(0xff-ply_walk);
 }
 
-void back_restore()
+void sync_hide()
 {
- u8*v=ADDR(VIDEO_RAM); 
+ u8*v=ADDR(VIDEO_RAM);  
  while(iback--)
   v[back[iback].pos]=back[iback].ch;
  iback=0;
 }
+void sync_show()
+{
+ u8*v=ADDR(VIDEO_RAM);  
+ 
+ REFRESH  
+
+ // restore previous elements
+ while(iback--)
+  v[back[iback].pos]=back[iback].ch;
+ iback=0;
+ // draw new ones
+ for(x=0;x<ibuffer;x++)
+  {
+#if defined(USE_CHARCACHE)
+   v[buffer[x].pos]=BASE_FRAME+buffer[x].ech;
+#else
+   v[buffer[x].pos]=buffer[x].ech;
+#endif
+   back[x].pos=buffer[x].pos;
+   back[x].ch=buffer[x].ch;
+  }
+#if defined(USE_CHARCACHE)
+ v=ADDR(0x1C00)+((BASE_FRAME)<<3);
+ for(x=0;x<ibuffer<<3;x++)
+  v[x]=charcache[x];
+#endif
+ 
+ iback=ibuffer;ibuffer=0;
+}
 
 void game_draw_characters()
 { 
+ //sync_hide();
+
  player_act(1);
 #if defined(HAS_ENEMYAI)
  ai_act(0);
 #endif
+#if defined(HAS_BALLMOVEMENT)
  ball_act();
+#endif
  
- REFRESH
- back_restore();
+#if defined(HAS_JUSTBALL)
+ ball_draw();
+#elif defined(HAS_JUSTME)
+ ply_draw(1);
+#else
  ply_draw(0);
  ply_draw(1);
- ball_draw(); 
- REFRESH
+ ball_draw();
+#endif 
+ sync_show(); 
 }
 
 void gui_update()
