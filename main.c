@@ -8,6 +8,7 @@
 
 #define HAS_ENEMYAI
 #define HAS_BALLMOVEMENT
+#define HAS_AUTOHIT
 
 // #define HAS_JUSTME
 //#define HAS_JUSTBALL
@@ -17,15 +18,20 @@
 #else
 int err=0;
 #endif
-//#define USE_FULL_OVERLAYS
-#define HAS_MUSIC
 
-#define HAS_KEYBOARD
-//#define HAS_LIGHTING
+//#define HAS_MUSIC
+//#define HAS_KEYBOARD
+
 
 #if defined(OSCAR64)
 
 #if defined(TARGET_UNEXPANDED)
+
+#if defined(USE_OVERLAYS)
+#define BASEMEMEND 0x19e0
+#else
+#define BASEMEMEND 0x1ba0
+#endif
 
 #pragma stacksize( 64 )
 #pragma heapsize( 4 )
@@ -33,7 +39,7 @@ int err=0;
 #pragma region( stack, 0x0100, 0x01f0, , , {stack} )
 //#pragma region( stack, 0x033c, 0x03fe, , , {stack} )
 
-#pragma region( main, 0x1080, 0x1ba0, , , {code,data,bss   } )
+#pragma region( main, 0x1080, BASEMEMEND, , , {code,data,bss   } )
 
 #pragma section( cache, 0 )
 #pragma region(bank1,  0x033c, 0x03fe, ,1, { cache } )
@@ -46,14 +52,23 @@ int err=0;
 #pragma region( main, 0x0480, 0x1ba0, , , {code,data,stack,bss   } )
 #endif
 
+#if defined(USE_OVERLAYS)
+#pragma overlay( game, 1 )
+#pragma section( bcodegame, 0 )
+#pragma section( bdatagame, 0 )
+#pragma region(bank3, BASEMEMEND+1, 0x1ba0, ,1, { bcodegame, bdatagame } )
+
+#pragma overlay( page, 3 )
+#pragma section( bcodepage, 0 )
+#pragma section( bdatapage, 0 )
+#pragma region(bank4,  BASEMEMEND+1, 0x1ba0, ,3, { bcodepage, bdatapage } )
+#endif
+
 #else
 
 int win_getmovement();
 
 #endif
-
-#define IMPLEMENT_C_HBUNPACK
-#include "hupack.c"
 
 #if defined(USE_OVERLAYS)
 #if defined(WIN32)
@@ -178,7 +193,7 @@ u8                    iback;
 
 u8                    tmp[8];
 u8                    gamestatus;
-u8                    x,y,ch,r;
+u8                    x,y;
 u8                    movement;
 
 #pragma bss(cache)
@@ -279,7 +294,7 @@ void syncPAL()
 
 void game_init()
 {
- srand();
+ //srand();
 
  POKE(VICCOLOR,SCREENBORDER_VALUE);
 
@@ -588,7 +603,7 @@ void gettmp(u8 a,u8 flip)
 void ply_mix(u8 w)
 {
  u8*frames=ADDR(FRAMES_START)+(ply[w].frame<<2);
- u8 by=0,l=ply[w].x&0x7;
+ u8 by=0,l=ply[w].x&0x7,ch;
  
  if(ply[w].flags&face_left)
   by=2;
@@ -690,16 +705,31 @@ u8 player_canhitball(u8 w)
  return 0;
 }
 
-void ball_hit()
+void ball_hit(u8 w)
 {
- ball.dy=-ball.dy;
- ball.dx=-ball.dx;
+ ball.dy=-ball.dy; 
+ if(ball.x>(VIDEO_W/2)*8)
+  ball.dx=-1;
+ else
+  ball.dx=1;
+ if(ball.h<(12<<3))
+  ball.dh=2;
+ //rand();
+ //ball.dx=((rnd_a&7)>>1)-2;
 }
 
 void player_hit(u8 w)
 {
  ply[w].frame=5;ply[w].time=0;
  ply[w].flags|=ply_hit;
+}
+void player_autohit(u8 w)
+{
+ if(player_canhitball(w))
+  {
+   player_hit(w);
+   ball_hit(w);
+  }
 }
 
 void player_act(u8 w)
@@ -708,13 +738,15 @@ void player_act(u8 w)
   {
    if(ply[w].flags&ply_hit)
     ;
+#if !defined(HAS_AUTOHIT)
    else
     {
      player_hit(w);
      if(ball.dy>0)
       if(player_canhitball(w))
-       ball_hit();
+       ball_hit(w);
     }
+#endif
   }
  else
  if(movement&(JOY_LEFT|JOY_RIGHT|JOY_UP|JOY_DOWN))
@@ -747,6 +779,14 @@ void player_act(u8 w)
   }
  else
   ply[1].flags&=(0xff-ply_walk);
+
+#if defined(HAS_AUTOHIT)
+ if(ply[w].flags&(ply_hit|ply_act))
+  ;
+ else
+  if(ball.dy>0)
+   player_autohit(w);
+#endif
 }
 
 void ai_act(u8 w)
@@ -785,20 +825,20 @@ void ai_act(u8 w)
   }
 
  if(ball.dy<0)
-  if(player_canhitball(w))
-   {    
-    player_hit(w);
-    ball_hit();
-   }
+  player_autohit(w);
 }
 
-void sync_hide()
+#if defined(USE_OVERLAYS)
+#pragma code ( bcodegame )
+#pragma data ( bdatagame )
+#endif
+
+void wait_forunfire()
 {
- u8*v=ADDR(VIDEO_RAM);  
- while(iback--)
-  v[back[iback].pos]=back[iback].ch;
- iback=0;
+ while(movement&JOY_FIRE)
+  game_input();
 }
+
 void sync_show()
 {
  u8*v=ADDR(VIDEO_RAM);  
@@ -833,12 +873,6 @@ void sync_show()
 #if defined(WIN32)
  REFRESH
 #endif
-}
-
-void wait_forunfire()
-{
- while(movement&JOY_FIRE)
-  game_input();
 }
 
 void game_waitingservice()
@@ -938,7 +972,19 @@ void gui_update()
 {
 }
 
+#if defined(USE_OVERLAYS)
+#pragma code ( code )
+#pragma data ( data )
+#endif
+
 // -------------------------------------------------------------
+#if defined(USE_OVERLAYS)
+#pragma code ( bcodepage )
+#pragma data ( bdatapage )
+#endif
+
+#define IMPLEMENT_C_HBUNPACK
+#include "hupack.c"
 
 void page_draw_page(u8 r)
 {
@@ -978,6 +1024,12 @@ void page_draw_page(u8 r)
  }
 }
 
+#if defined(USE_OVERLAYS)
+#pragma code ( code )
+#pragma data ( data )
+#endif
+
+
 // -------------------------------------------------------------
 
 #if defined(WIN32)
@@ -1010,9 +1062,7 @@ int main()
 
 // ---------------------------
 #if defined(USE_OVERLAYS)
-#if defined(USE_FULL_OVERLAYS)
      load("GAME");
-#endif
 #endif
      while(1)
       {
